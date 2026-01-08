@@ -1,0 +1,22 @@
+[package]
+name = "monte_carlo_pi"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "monte_carlo_single"
+path = "src/bin/monte_carlo_single.rs"
+
+[[bin]]
+name = "monte_carlo_parallel"
+path = "src/bin/monte_carlo_parallel.rs"
+
+[dependencies]
+rayon = "1.8"
+num_cpus = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
