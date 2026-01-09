@@ -11,6 +11,7 @@ import sys
 import platform
 import psutil
 import time
+import shutil
 from pathlib import Path
 
 # プロジェクトルート
@@ -210,35 +211,77 @@ def run_c(mode):
 
 def run_julia(mode):
     """Julia版を実行"""
+    # Juliaがインストールされているか確認
+    julia_cmd = shutil.which("julia")
+    if not julia_cmd:
+        print(f"    Julia ({mode}): julia not found, skipping")
+        return None
+    
+    try:
+        subprocess.run(["julia", "--version"], capture_output=True, timeout=5, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        print(f"    Julia ({mode}): julia not found, skipping")
+        return None
+    
     script = ROOT_DIR / "julia" / f"monte_carlo_{mode}.jl"
+    if not script.exists():
+        print(f"    Julia ({mode}): Script not found, skipping")
+        return None
+    
     print(f"    Running Julia ({mode})...", end="", flush=True)
     start_time = time.time()
     
     # ウォームアップ実行
     print(" [warmup]", end="", flush=True)
-    subprocess.run(["julia", str(script), str(WARMUP_ITERATIONS)],
-                  capture_output=True, timeout=60)
+    try:
+        subprocess.run(["julia", str(script), str(WARMUP_ITERATIONS)],
+                      capture_output=True, timeout=60, check=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        elapsed = time.time() - start_time
+        print(f" Failed ({elapsed:.1f}s): warmup error")
+        return None
     
     # 本番実行
     print(" [running]", end="", flush=True)
-    result = subprocess.run(["julia", str(script), str(ITERATIONS)],
-                          capture_output=True, text=True, timeout=600)
-    elapsed = time.time() - start_time
-    if result.returncode == 0:
+    try:
+        result = subprocess.run(["julia", str(script), str(ITERATIONS)],
+                              capture_output=True, text=True, timeout=600, check=True)
+        elapsed = time.time() - start_time
         data = json.loads(result.stdout)
         print(f" Done ({elapsed:.1f}s, {data.get('time_ms', 0):.2f}ms)")
         return data
-    else:
-        print(f" Failed ({elapsed:.1f}s, return code: {result.returncode})")
-        if result.stderr:
-            print(f"      Error: {result.stderr[:200]}")
-    return None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        elapsed = time.time() - start_time
+        print(f" Failed ({elapsed:.1f}s): execution error")
+        return None
+    except json.JSONDecodeError as e:
+        elapsed = time.time() - start_time
+        print(f" Failed ({elapsed:.1f}s): JSON parse error")
+        return None
 
 
 def run_java(mode, gc_mode="default"):
     """Java版を実行"""
+    # Javaがインストールされているか確認
+    java_cmd = shutil.which("java")
+    if not java_cmd:
+        print(f"    Java ({mode}): java not found, skipping")
+        return None
+    
+    try:
+        subprocess.run(["java", "-version"], capture_output=True, timeout=5, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        print(f"    Java ({mode}): java not found, skipping")
+        return None
+    
     class_name = f"MonteCarlo{mode.capitalize()}"
     classpath = str(BUILD_DIR)
+    
+    # クラスファイルが存在するか確認
+    class_file = BUILD_DIR / f"{class_name}.class"
+    if not class_file.exists():
+        print(f"    Java ({mode}): Class file not found (run 'build.ps1 java' first), skipping")
+        return None
     
     gc_suffix = f" ({gc_mode})" if mode == "parallel" else ""
     print(f"    Running Java ({mode}{gc_suffix})...", end="", flush=True)
@@ -250,32 +293,37 @@ def run_java(mode, gc_mode="default"):
         warmup_args = []
         if gc_mode == "pure":
             warmup_args = ["--pure"]
-        subprocess.run(["java", "-cp", classpath, class_name] + warmup_args,
-                      capture_output=True, timeout=60)
+        try:
+            subprocess.run(["java", "-cp", classpath, class_name] + warmup_args,
+                          capture_output=True, timeout=60, check=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass  # ウォームアップ失敗でも続行
     
     args = []
     if mode == "parallel" and gc_mode == "pure":
         args = ["--pure"]
     
     print(" [running]", end="", flush=True)
-    result = subprocess.run(["java", "-cp", classpath, class_name] + args,
-                          capture_output=True, text=True, timeout=600)
-    elapsed = time.time() - start_time
-    if result.returncode == 0:
-        try:
-            data = json.loads(result.stdout)
-            if mode == "parallel":
-                data["gc_mode"] = gc_mode
-            print(f" Done ({elapsed:.1f}s, {data.get('time_ms', 0):.2f}ms)")
-            return data
-        except json.JSONDecodeError as e:
-            print(f" Failed ({elapsed:.1f}s): JSON parse error: {e}")
-            return None
-    else:
-        print(f" Failed ({elapsed:.1f}s, return code: {result.returncode})")
-        if result.stderr:
-            print(f"      Error: {result.stderr[:200]}")
-    return None
+    try:
+        result = subprocess.run(["java", "-cp", classpath, class_name] + args,
+                              capture_output=True, text=True, timeout=600, check=True)
+        elapsed = time.time() - start_time
+        data = json.loads(result.stdout)
+        if mode == "parallel":
+            data["gc_mode"] = gc_mode
+        print(f" Done ({elapsed:.1f}s, {data.get('time_ms', 0):.2f}ms)")
+        return data
+    except subprocess.CalledProcessError as e:
+        elapsed = time.time() - start_time
+        print(f" Failed ({elapsed:.1f}s, return code: {e.returncode})")
+        if e.stderr:
+            stderr_str = e.stderr.decode('utf-8', errors='ignore') if isinstance(e.stderr, bytes) else e.stderr
+            print(f"      Error: {stderr_str[:200]}")
+        return None
+    except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        elapsed = time.time() - start_time
+        print(f" Failed ({elapsed:.1f}s): {type(e).__name__}")
+        return None
 
 
 def run_javascript(mode):
