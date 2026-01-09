@@ -21,11 +21,13 @@
 
 // 左ローテーション（ビットを左に回転）
 function rotl(x, k) {
-    // BigInt対応
+    // BigInt対応（常にBigIntとして処理）
     if (typeof x === 'bigint') {
         return (x << BigInt(k)) | (x >> BigInt(64 - k));
     }
-    return (x << k) | (x >>> (64 - k));
+    // 通常の数値の場合もBigIntに変換
+    const bigX = BigInt(x);
+    return (bigX << BigInt(k)) | (bigX >> BigInt(64 - k));
 }
 
 class Xoshiro256 {
@@ -76,7 +78,10 @@ class Xoshiro256 {
      */
     nextDouble() {
         // 64ビット整数を53ビット精度の浮動小数点数に変換
-        return Number(this.next() >> 11n) * (1.0 / (1n << 53n));
+        const value = this.next();
+        const shifted = Number(value >> 11n);
+        const divisor = Number(1n << 53n);
+        return shifted * (1.0 / divisor);
     }
 }
 

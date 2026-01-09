@@ -61,7 +61,9 @@ def xoshiro_next_double(state: list) -> float:
     Returns:
         乱数（0.0 <= x < 1.0）
     """
-    return (xoshiro_next(state) >> 11) * (1.0 / (1 << 53))
+    # Numbaでは定数を明示的に定義
+    SHIFT_53 = 9007199254740992.0  # 2^53
+    return (xoshiro_next(state) >> 11) * (1.0 / SHIFT_53)
 
 
 @njit
